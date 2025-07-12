@@ -1,88 +1,142 @@
 # 🎞️ FastAPI Video Stitcher
 
-This project is a **FastAPI-based backend service** that allows users to upload multiple video files and returns a single stitched `.mp4` video. It uses `ffmpeg` (via `ffmpeg-python`) to process and concatenate videos, and is **deployed live on Render**.
+This project is a **FastAPI-based backend service** that allows users to stitch multiple videos from URLs with optional voice overlay. It uses `ffmpeg` (via `ffmpeg-python`) to process and concatenate videos, and supports both portrait and landscape modes.
 
 ---
 
-## Live API
-
-> ✅ **Deployed on Render**  
-> Access your API at:  
-> `https://<your-app-name>.onrender.com`
-
-> Replace `<your-app-name>` with your actual Render deployment name.
-
----
-
-## 🚀 API Endpoint
+## 🚀 API Endpoints
 
 ### `POST /stitch`
 
--   **Description:** Upload multiple video files to get a single stitched video in return.
--   **Form Field:** `files` (List of video files as `UploadFile`)
+-   **Description:** Stitch multiple videos from URLs with optional voice overlay
+-   **Content-Type:** `application/json`
 -   **Response:** Returns a downloadable `.mp4` video file
+
+#### Request Body Schema:
+
+```json
+{
+  "videos": [
+    {
+      "url": "https://storage.googleapis.com/.../video1.mp4",
+      "sequence": 1
+    },
+    {
+      "url": "https://storage.googleapis.com/.../video2.mp4", 
+      "sequence": 2
+    }
+  ],
+  "voice_url": "https://static.lisaapp.in/.../voice.mp3",
+  "voice_volume": 1.0,
+  "mode": "portrait"
+}
+```
+
+#### Parameters:
+
+- **videos** (required): Array of video objects
+  - **url** (required): Direct download URL for the video file
+  - **sequence** (required): Order number for stitching (1, 2, 3... or any order like 2, 1, 3)
+- **voice_url** (optional): URL for voice/audio overlay file
+- **voice_volume** (optional): Volume level for voice (0.0 to 2.0, default: 1.0)
+- **mode** (optional): Video orientation ("portrait" or "landscape", default: "portrait")
 
 #### Example using `curl`:
 
 ```bash
 curl -X POST http://localhost:8000/stitch \
-  -F "files=@video1.mp4" \
-  -F "files=@video2.mp4" \
-  --output output.mp4
+  -H "Content-Type: application/json" \
+  -d '{
+    "videos": [
+      {
+        "url": "https://example.com/video1.mp4",
+        "sequence": 1
+      },
+      {
+        "url": "https://example.com/video2.mp4",
+        "sequence": 2
+      }
+    ],
+    "voice_url": "https://example.com/voice.mp3",
+    "voice_volume": 1.0,
+    "mode": "portrait"
+  }' \
+  --output stitched_video.mp4
 ```
+
+### `GET /health`
+
+-   **Description:** Health check endpoint
+-   **Response:** JSON status message
+
+---
 
 ## Project Structure
 
 .
 ├── main.py # FastAPI application with the /stitch endpoint
 ├── video_utils.py # Video handling and stitching utilities
-├── uploads/ # Temporarily stores uploaded and processed videos
+├── uploads/ # Temporarily stores downloaded and processed videos
 ├── stitched/ # Stores final output videos
 ├── requirements.txt # List of dependencies
 └── README.md # Project documentation (this file)
 
 ## 🧠 How It Works
 
-### 1. 📤 File Upload
+### 1. 📥 Video Download
 
-Files are uploaded through a `multipart/form-data` `POST` request to the `/stitch` endpoint.
+Videos are downloaded from the provided URLs and saved to the `uploads/` directory.
 
-### 2. 💾 Saving Files
+### 2. 🔢 Sequence Sorting
 
-Each uploaded file is saved to the `uploads/` directory with a unique UUID-prefixed filename using `save_uploaded_file()`.
+Videos are sorted by their sequence number to ensure correct stitching order.
 
-### 3. 🛠️ Video Normalization
+### 3. 🛠️ Video Processing
 
-Each video is:
+Each video is processed to match the specifications:
+- **Portrait Mode**: Maintains aspect ratio with padding
+- **Landscape Mode**: Scales to fit target dimensions
+- Frame rate normalization
+- Audio removal (handled separately)
 
--   Rescaled to match the resolution of the first video
--   Re-encoded to have the same FPS and codec (`H.264` for video, `AAC` for audio)
--   Audio is retained if available
+### 4. 🎵 Audio Handling
 
-### 4. ➕ Concatenation
+**Without voice_url:**
+- Preserves original audio from each video segment
+- Stitches videos with their original audio intact
 
--   A temporary `.txt` file lists all processed video paths
--   FFmpeg reads this file and merges the clips seamlessly using the `concat` demuxer
+**With voice_url:**
+- Downloads the voice file
+- Removes audio from all videos
+- Loops or trims voice to match total video duration
+- Applies volume adjustment
+- Overlays voice on the final stitched video
 
-### 5. 🧹 Cleanup
+### 5. ➕ Concatenation
 
-All temporary files are removed after stitching:
+- Videos are concatenated in sequence order
+- FFmpeg handles seamless merging using the `concat` demuxer
 
--   Uploaded files
--   Intermediate processed videos
--   FFmpeg `.txt` list file
+### 6. 🧹 Cleanup
+
+All temporary files are removed after processing:
+- Downloaded videos
+- Processed videos
+- Voice files
+- FFmpeg input lists
 
 ---
 
 ## 🧩 Dependencies
 
 These Python libraries are required:
+```
 fastapi
 uvicorn
 python-multipart
 ffmpeg-python
-
-pgsql
+requests
+```
 
 Also, ensure that **FFmpeg** is installed on your system.
 
@@ -103,10 +157,69 @@ brew install ffmpeg
 #### 🖥️ Ubuntu / Debian
 
 ```bash
-brew install ffmpeg
+sudo apt update
+sudo apt install ffmpeg
 ```
 
 #### 🖥️ Windows
 
 Download FFmpeg from the official site:
 👉 https://ffmpeg.org/download.html
+
+---
+
+## 🚀 Running the API
+
+1. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+2. Start the server:
+```bash
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+3. Access the API:
+- **API Documentation**: http://localhost:8000/docs
+- **Health Check**: http://localhost:8000/health
+- **Stitch Endpoint**: http://localhost:8000/stitch
+
+---
+
+## 📝 Usage Examples
+
+### Basic Video Stitching
+```json
+{
+  "videos": [
+    {"url": "https://example.com/video1.mp4", "sequence": 1},
+    {"url": "https://example.com/video2.mp4", "sequence": 2}
+  ]
+}
+```
+
+### With Voice Overlay
+```json
+{
+  "videos": [
+    {"url": "https://example.com/video1.mp4", "sequence": 1},
+    {"url": "https://example.com/video2.mp4", "sequence": 2}
+  ],
+  "voice_url": "https://example.com/voice.mp3",
+  "voice_volume": 1.0,
+  "mode": "portrait"
+}
+```
+
+### Custom Sequence Order
+```json
+{
+  "videos": [
+    {"url": "https://example.com/intro.mp4", "sequence": 1},
+    {"url": "https://example.com/ending.mp4", "sequence": 3},
+    {"url": "https://example.com/middle.mp4", "sequence": 2}
+  ],
+  "mode": "landscape"
+}
+```
