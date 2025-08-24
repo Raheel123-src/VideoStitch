@@ -4,35 +4,47 @@ import ffmpeg
 import requests
 from typing import List, Optional
 
-UPLOAD_DIR = "uploads"
-STITCHED_DIR = "stitched"
+# Directory paths - automatically detect Modal environment vs local development
+# In Modal containers: /root/uploads, /root/stitched
+# In local development: uploads/, stitched/
+UPLOAD_DIR = "/root/uploads" if os.path.exists("/root") else "uploads"
+STITCHED_DIR = "/root/stitched" if os.path.exists("/root") else "stitched"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(STITCHED_DIR, exist_ok=True)
 
-def download_video_from_url(url: str, identifier: str) -> str:
-    """Download video from URL and save to disk with unique name"""
+def download_video_from_url(url: str, identifier: str, custom_upload_dir: Optional[str] = None) -> str:
+    """Download video or audio from URL and save to disk with unique name"""
     try:
         response = requests.get(url, stream=True)
         response.raise_for_status()
         
-        # Get file extension from URL or default to mp4
-        file_extension = "mp4"
+        # Get file extension from URL
+        file_extension = None
         try:
             # Extract filename from URL (before query parameters)
             url_path = url.split("?")[0]  # Remove query parameters
             filename = url_path.split("/")[-1]  # Get the last part of the path
             if "." in filename:
                 file_extension = filename.split(".")[-1].lower()
-                # Validate common video extensions
-                if file_extension not in ["mp4", "avi", "mov", "mkv", "webm", "flv", "wmv"]:
-                    file_extension = "mp4"  # Default to mp4 if unknown extension
         except:
-            file_extension = "mp4"  # Default fallback
+            pass
+        
+        # If no extension found or it's not recognized, determine based on identifier
+        if not file_extension or file_extension not in ["mp4", "avi", "mov", "mkv", "webm", "flv", "wmv", "mp3", "wav", "aac", "ogg", "m4a", "voice"]:
+            if identifier == "voice":
+                # For voice files, preserve the original extension or default to mp3
+                file_extension = file_extension if file_extension else "mp3"
+            else:
+                # For videos, default to mp4
+                file_extension = "mp4"
         
         # Generate a shorter, unique filename
         short_uuid = uuid.uuid4().hex[:8]  # Use only first 8 characters
         filename = f"{identifier}_{short_uuid}.{file_extension}"
-        path = os.path.join(UPLOAD_DIR, filename)
+        
+        # Use custom directory if provided, otherwise use default
+        upload_dir = custom_upload_dir if custom_upload_dir else UPLOAD_DIR
+        path = os.path.join(upload_dir, filename)
         
         with open(path, "wb") as buffer:
             for chunk in response.iter_content(chunk_size=8192):
@@ -40,7 +52,7 @@ def download_video_from_url(url: str, identifier: str) -> str:
         
         return path
     except Exception as e:
-        raise Exception(f"Failed to download video from {url}: {str(e)}")
+        raise Exception(f"Failed to download file from {url}: {str(e)}")
 
 def get_video_properties(video_path: str) -> dict:
     """Get video properties using ffprobe"""
@@ -72,10 +84,11 @@ def get_audio_properties(audio_path: str) -> dict:
         'sample_rate': int(audio_stream['sample_rate'])
     }
 
-def process_video_for_concatenation(video_path: str, target_props: dict, mode: str, remove_audio: bool = False) -> str:
+def process_video_for_concatenation(video_path: str, target_props: dict, mode: str, remove_audio: bool = False, custom_upload_dir: Optional[str] = None) -> str:
     """Process a single video to match target specifications"""
     short_uuid = uuid.uuid4().hex[:8]
-    processed_path = os.path.join(UPLOAD_DIR, f"processed_{short_uuid}.mp4")
+    upload_dir = custom_upload_dir if custom_upload_dir else UPLOAD_DIR
+    processed_path = os.path.join(upload_dir, f"processed_{short_uuid}.mp4")
     
     # Check if video has audio
     video_props = get_video_properties(video_path)
@@ -127,10 +140,14 @@ def process_video_for_concatenation(video_path: str, target_props: dict, mode: s
     
     return processed_path
 
-def concatenate_videos_with_voice(video_paths: List[str], voice_path: Optional[str], voice_volume: float, mode: str) -> str:
+def concatenate_videos_with_voice(video_paths: List[str], voice_path: Optional[str], voice_volume: float, mode: str, custom_upload_dir: Optional[str] = None, custom_stitched_dir: Optional[str] = None, bgm_path: Optional[str] = None) -> str:
     """Concatenate multiple videos with optional voice overlay"""
     if not video_paths:
         raise ValueError("No video paths provided")
+    
+    # Use custom directories if provided, otherwise use defaults
+    upload_dir = custom_upload_dir if custom_upload_dir else UPLOAD_DIR
+    stitched_dir = custom_stitched_dir if custom_stitched_dir else STITCHED_DIR
     
     # Get properties of first video as target
     target_props = get_video_properties(video_paths[0])
@@ -139,12 +156,12 @@ def concatenate_videos_with_voice(video_paths: List[str], voice_path: Optional[s
     remove_audio = voice_path is not None
     processed_paths = []
     for path in video_paths:
-        processed_path = process_video_for_concatenation(path, target_props, mode, remove_audio)
+        processed_path = process_video_for_concatenation(path, target_props, mode, remove_audio, upload_dir)
         processed_paths.append(processed_path)
     
     # Create input file for video concatenation
     short_uuid = uuid.uuid4().hex[:8]
-    txt_file_path = os.path.join(UPLOAD_DIR, f"inputs_{short_uuid}.txt")
+    txt_file_path = os.path.join(upload_dir, f"inputs_{short_uuid}.txt")
     with open(txt_file_path, "w") as f:
         for path in processed_paths:
             f.write(f"file '{os.path.abspath(path)}'\n")
@@ -152,58 +169,101 @@ def concatenate_videos_with_voice(video_paths: List[str], voice_path: Optional[s
     # Output file
     short_uuid = uuid.uuid4().hex[:8]
     output_filename = f"stitched_{short_uuid}.mp4"
-    output_path = os.path.join(STITCHED_DIR, output_filename)
+    output_path = os.path.join(stitched_dir, output_filename)
     
     try:
-        if voice_path:
-            # 1. Concatenate videos without audio
-            temp_concat_path = os.path.join(UPLOAD_DIR, f"temp_concat_{uuid.uuid4().hex[:8]}.mp4")
+        if voice_path or bgm_path:
+            # 1. Concatenate videos with their original audio
+            temp_concat_path = os.path.join(upload_dir, f"temp_concat_{uuid.uuid4().hex[:8]}.mp4")
             (
                 ffmpeg
                 .input(txt_file_path, format='concat', safe=0)
                 .output(
                     temp_concat_path,
                     vcodec='libx264',
+                    acodec='aac',
                     preset='fast',
                     crf=23,
-                    movflags='faststart',
-                    an=None  # No audio
+                    movflags='faststart'
                 )
                 .overwrite_output()
                 .run()
             )
 
-            # 2. Process voice to match total duration
+            # 2. Process additional audio (voice and/or BGM)
             total_duration = sum(get_video_properties(path)['duration'] for path in video_paths)
-            voice_props = get_audio_properties(voice_path)
-            voice_input = ffmpeg.input(voice_path)
-            if voice_props['duration'] < total_duration:
-                voice_audio = voice_input.audio.filter('aloop', loop=-1, size=int(total_duration * voice_props['sample_rate']))
+            audio_inputs = []
+            
+            # Add original video audio as the base (only if it actually exists)
+            try:
+                # Actually probe the file to see if it has audio
+                probe_result = ffmpeg.probe(temp_concat_path)
+                has_audio_stream = any(stream['codec_type'] == 'audio' for stream in probe_result['streams'])
+                
+                if has_audio_stream:
+                    video_audio = ffmpeg.input(temp_concat_path).audio
+                    audio_inputs.append(video_audio)
+                    print(f"✅ Original video audio preserved")
+                else:
+                    print("ℹ️  Video has no audio stream, proceeding without original audio")
+            except Exception as e:
+                # If probing fails, assume no audio
+                print(f"ℹ️  Could not detect video audio, proceeding without original audio: {e}")
+                pass
+            
+            print(f"🔍 Audio inputs count after video: {len(audio_inputs)}")
+            
+            # Process voice if provided
+            if voice_path:
+                voice_props = get_audio_properties(voice_path)
+                voice_input = ffmpeg.input(voice_path)
+                # No looping - just trim if voice is longer than video, or use as-is if shorter
+                if voice_props['duration'] > total_duration:
+                    voice_audio = voice_input.audio.filter('atrim', duration=total_duration)
+                else:
+                    voice_audio = voice_input.audio  # Use voice as-is (no padding/looping)
+                voice_audio = voice_audio.filter('volume', voice_volume)
+                audio_inputs.append(voice_audio)
+                print(f"✅ Voice audio processed: {os.path.basename(voice_path)} (duration: {voice_props['duration']:.1f}s)")
+                print(f"🔍 Audio inputs count after voice: {len(audio_inputs)}")
+            
+            # Process BGM if provided
+            if bgm_path:
+                bgm_props = get_audio_properties(bgm_path)
+                bgm_input = ffmpeg.input(bgm_path)
+                # BGM is already processed to match duration, just ensure it's the right length
+                bgm_audio = bgm_input.audio.filter('atrim', duration=total_duration)
+                audio_inputs.append(bgm_audio)
+                print(f"✅ BGM audio processed: {os.path.basename(bgm_path)}")
+            
+            # 3. Mix all audio streams (original video audio + voice + BGM)
+            if len(audio_inputs) == 0:
+                # No audio streams to mix
+                raise Exception("No audio streams available for mixing")
+            elif len(audio_inputs) == 1:
+                final_audio = audio_inputs[0]
+                print(f"✅ Using single audio stream")
             else:
-                voice_audio = voice_input.audio.filter('atrim', duration=total_duration)
-            voice_audio = voice_audio.filter('volume', voice_volume)
-            processed_voice_path = os.path.join(UPLOAD_DIR, f"voice_{uuid.uuid4().hex[:8]}.aac")
-            ffmpeg.output(
-                voice_audio,
-                processed_voice_path,
-                acodec='aac'
-            ).overwrite_output().run()
-
-            # 3. Combine video and processed voice
+                # Mix all audio streams together
+                final_audio = audio_inputs[0]
+                for i in range(1, len(audio_inputs)):
+                    final_audio = ffmpeg.filter([final_audio, audio_inputs[i]], 'amix', inputs=len(audio_inputs), duration='first')
+                print(f"✅ Mixed {len(audio_inputs)} audio streams (original + voice + BGM)")
+            
+            # 4. Combine video and mixed audio
             video_input = ffmpeg.input(temp_concat_path)
-            audio_input = ffmpeg.input(processed_voice_path)
             (
                 ffmpeg
                 .output(
                     video_input.video,
-                    audio_input.audio,
+                    final_audio,
                     output_path,
                     vcodec='libx264',
                     acodec='aac',
                     preset='fast',
                     crf=23,
                     movflags='faststart',
-                    shortest=None  # Ensures video stops at the shortest stream (voice)
+                    shortest=None
                 )
                 .global_args('-map', '0:v')
                 .global_args('-map', '1:a')
@@ -214,8 +274,6 @@ def concatenate_videos_with_voice(video_paths: List[str], voice_path: Optional[s
             # Cleanup
             if os.path.exists(temp_concat_path):
                 os.unlink(temp_concat_path)
-            if os.path.exists(processed_voice_path):
-                os.unlink(processed_voice_path)
         else:
             # Concatenate videos with their original audio
             (

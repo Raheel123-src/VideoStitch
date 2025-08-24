@@ -1,225 +1,373 @@
-# 🎞️ FastAPI Video Stitcher
+# 🎞️ Video Stitcher API - Complete Documentation
 
-This project is a **FastAPI-based backend service** that allows users to stitch multiple videos from URLs with optional voice overlay. It uses `ffmpeg` (via `ffmpeg-python`) to process and concatenate videos, and supports both portrait and landscape modes.
+A **FastAPI-based video stitching service** that combines multiple videos with optional voice overlay, background music (BGM), and persistent session management using Firebase. Deployable on Modal with S3 integration.
 
 ---
 
-## 🚀 API Endpoints
+## 🚀 **API Endpoints Overview**
 
-### `POST /stitch`
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/stitch` | POST | Start video processing (returns session ID) |
+| `/status/{session_id}` | GET | Check processing status |
+| `/sessions` | GET | List all sessions |
+| `/delete/{session_id}` | DELETE | Delete a session |
+| `/cleanup` | POST | Clean up old sessions |
+| `/bgm` | GET | List available BGM options |
+| `/stats` | GET | Get session statistics |
+| `/health` | GET | Health check |
+| `/docs` | GET | Interactive API documentation |
 
--   **Description:** Stitch multiple videos from URLs with optional voice overlay
--   **Content-Type:** `application/json`
--   **Response:** Returns a downloadable `.mp4` video file
+---
 
-#### Request Body Schema:
+## 📋 **POST /stitch - Video Stitching Endpoint**
+
+### **Description**
+Stitch multiple videos with optional voice overlay, background music, and custom settings. Returns a session ID for tracking progress.
+
+### **Request Body Schema**
 
 ```json
 {
   "videos": [
     {
-      "url": "https://storage.googleapis.com/.../video1.mp4",
+      "url": "https://example.com/video1.mp4",
       "sequence": 1
     },
     {
-      "url": "https://storage.googleapis.com/.../video2.mp4", 
+      "url": "https://example.com/video2.mp4", 
       "sequence": 2
     }
   ],
-  "voice_url": "https://static.lisaapp.in/.../voice.mp3",
+  "voice_url": "https://example.com/voice.mp3",
   "voice_volume": 1.0,
+  "mode": "portrait",
+  "bgm_enabled": false,
+  "bgm_category": "cinematic-happy",
+  "bgm_volume": 0.3
+}
+```
+
+### **Field Details**
+
+#### **Required Fields**
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `videos` | Array | List of video objects to stitch | `[{"url": "...", "sequence": 1}]` |
+
+#### **Video Object Fields**
+
+| Field | Type | Required | Description | Constraints |
+|-------|------|----------|-------------|-------------|
+| `url` | String | ✅ | Direct download URL for video | Must be accessible HTTP/HTTPS URL |
+| `sequence` | Integer | ✅ | Stitching order (0-based) | Any integer (0, 1, 2, 3...) |
+
+#### **Optional Fields**
+
+| Field | Type | Default | Description | Constraints |
+|-------|------|---------|-------------|-------------|
+| `voice_url` | String | `null` | URL for voice/audio overlay | Any audio format (mp3, wav, aac, .voice, etc.) |
+| `voice_volume` | Float | `1.0` | Voice volume multiplier | `0.0` to `2.0` |
+| `mode` | String | `"portrait"` | Video orientation | `"portrait"` or `"landscape"` |
+| `bgm_enabled` | Boolean | `false` | Enable background music | `true` or `false` |
+| `bgm_category` | String | `null` | BGM category filter | See BGM categories below |
+| `bgm_volume` | Float | `0.3` | BGM volume multiplier | `0.0` to `2.0` |
+
+### **Response Format**
+
+```json
+{
+  "session_id": "uuid-here",
+  "message": "Video processing started. Use GET /status/{session_id} to check progress.",
+  "status_endpoint": "/status/{session_id}"
+}
+```
+
+---
+
+## 🎵 **Background Music (BGM) System**
+
+### **BGM Categories Available**
+
+| Category | Description | Files |
+|----------|-------------|-------|
+| `cinematic-happy` | Upbeat cinematic tracks | 5 files |
+| `real-estate` | Professional real estate music | 3 files |
+| `for-video` | General video background music | 4 files |
+| `technical` | Technical/presentation music | 6 files |
+
+### **BGM Behavior**
+
+- **Random Selection**: BGM is randomly selected from the specified category
+- **Duration Matching**: BGM is automatically trimmed/looped to match video duration
+- **Volume Control**: BGM volume can be adjusted independently of voice
+- **Audio Mixing**: BGM is mixed with original video audio and voice (if provided)
+
+### **BGM Examples**
+
+```json
+// Enable BGM with default settings
+{
+  "videos": [...],
+  "bgm_enabled": true
+}
+
+// Custom BGM category and volume
+{
+  "videos": [...],
+  "bgm_enabled": true,
+  "bgm_category": "real-estate",
+  "bgm_volume": 0.5
+}
+```
+
+---
+
+## 📊 **GET /status/{session_id} - Status Check**
+
+### **Description**
+Check the processing status of a video stitching session.
+
+### **Response Format**
+
+```json
+{
+  "session_id": "uuid-here",
+  "status": "processing",
+  "progress": 75,
+  "message": "Uploading to S3...",
+  "videos": [...],
+  "voice_url": "...",
+  "bgm_enabled": true,
+  "bgm_category": "cinematic-happy",
+  "bgm_volume": 0.3,
+  "created_at": "2024-01-01T00:00:00Z",
+  "updated_at": "2024-01-01T00:00:00Z",
+  "s3_url": "https://s3.amazonaws.com/...",
+  "error": null
+}
+```
+
+### **Status Values**
+
+| Status | Description |
+|--------|-------------|
+| `processing` | Video is being processed |
+| `completed` | Processing finished successfully |
+| `failed` | Processing failed with error |
+
+### **Progress Values**
+
+| Progress | Description |
+|----------|-------------|
+| `0-10` | Session created, starting |
+| `10-40` | Downloading videos |
+| `40-45` | Downloading voice file |
+| `45-50` | Processing BGM |
+| `50-80` | Processing and stitching videos |
+| `80-100` | Uploading to S3 |
+| `100` | Completed |
+
+---
+
+## 🔥 **Firebase Session Management**
+
+### **Features**
+- **Persistent Storage**: Sessions survive container restarts
+- **Real-time Updates**: Live progress tracking across containers
+- **Concurrent Processing**: Handle multiple requests simultaneously
+- **Session Isolation**: Each request runs in isolated directories
+
+### **Session Lifecycle**
+1. **Creation**: Session created with initial status
+2. **Processing**: Real-time progress updates
+3. **Completion**: Final S3 URL returned
+4. **Cleanup**: Automatic cleanup after 7 days
+
+---
+
+## 🚀 **Modal Deployment**
+
+### **Prerequisites**
+1. **Modal Account**: Sign up at [modal.com](https://modal.com)
+2. **Firebase Project**: Create project and enable Firestore
+3. **AWS S3**: Create bucket and IAM user
+4. **Service Account Key**: Download Firebase service account JSON
+
+### **Setup Commands**
+
+```bash
+# 1. Install Modal CLI
+pip install modal
+
+# 2. Login to Modal
+modal token new
+
+# 3. Create S3 credentials secret
+modal secret create s3-credentials \
+  AWS_ACCESS_KEY_ID=your_access_key \
+  AWS_SECRET_ACCESS_KEY=your_secret_key \
+  S3_BUCKET_NAME=your_bucket_name \
+  AWS_DEFAULT_REGION=your_region
+
+# 4. Create Firebase config secret
+modal secret create firebase-config \
+  FIREBASE_PROJECT_ID=your_project_id \
+  GOOGLE_APPLICATION_CREDENTIALS=/root/serviceAccountKey.json
+
+# 5. Deploy to Modal
+modal deploy modal_app.py
+```
+
+---
+
+## 📝 **Complete Usage Examples**
+
+### **Basic Video Stitching**
+```json
+{
+  "videos": [
+    {"url": "https://example.com/intro.mp4", "sequence": 0},
+    {"url": "https://example.com/middle.mp4", "sequence": 1},
+    {"url": "https://example.com/ending.mp4", "sequence": 2}
+  ]
+}
+```
+
+### **Video + Voice + BGM**
+```json
+{
+  "videos": [
+    {"url": "https://example.com/video1.mp4", "sequence": 0},
+    {"url": "https://example.com/video2.mp4", "sequence": 1}
+  ],
+  "voice_url": "https://example.com/narration.voice",
+  "voice_volume": 1.2,
+  "mode": "landscape",
+  "bgm_enabled": true,
+  "bgm_category": "cinematic-happy",
+  "bgm_volume": 0.4
+}
+```
+
+### **Custom Sequence Order**
+```json
+{
+  "videos": [
+    {"url": "https://example.com/intro.mp4", "sequence": 0},
+    {"url": "https://example.com/ending.mp4", "sequence": 2},
+    {"url": "https://example.com/middle.mp4", "sequence": 1}
+  ],
   "mode": "portrait"
 }
 ```
 
-#### Parameters:
+---
 
-- **videos** (required): Array of video objects
-  - **url** (required): Direct download URL for the video file
-  - **sequence** (required): Order number for stitching (1, 2, 3... or any order like 2, 1, 3)
-- **voice_url** (optional): URL for voice/audio overlay file
-- **voice_volume** (optional): Volume level for voice (0.0 to 2.0, default: 1.0)
-- **mode** (optional): Video orientation ("portrait" or "landscape", default: "portrait")
+## 🔧 **Technical Details**
 
-#### Example using `curl`:
+### **Video Processing**
+- **Format Support**: MP4, AVI, MOV, MKV, WebM, FLV, WMV
+- **Codec**: H.264 video, AAC audio
+- **Quality**: CRF 23 (high quality)
+- **Frame Rate**: Normalized to target FPS
 
+### **Audio Processing**
+- **Voice**: No looping (plays once, then silence)
+- **BGM**: Automatic duration matching
+- **Mixing**: Preserves original video audio
+- **Volume**: Independent control for each audio stream
+
+### **File Handling**
+- **Session Isolation**: Unique directories per request
+- **Automatic Cleanup**: Temporary files removed after processing
+- **S3 Integration**: Final videos uploaded to S3 bucket
+- **Race Condition Prevention**: Concurrent request handling
+
+---
+
+## 🧪 **Testing the API**
+
+### **Local Testing**
 ```bash
-curl -X POST http://localhost:8000/stitch \
+# Start the API
+uvicorn main:app --reload
+
+# Test with curl
+curl -X POST "http://localhost:8000/stitch" \
   -H "Content-Type: application/json" \
-  -d '{
-    "videos": [
-      {
-        "url": "https://example.com/video1.mp4",
-        "sequence": 1
-      },
-      {
-        "url": "https://example.com/video2.mp4",
-        "sequence": 2
-      }
-    ],
-    "voice_url": "https://example.com/voice.mp3",
-    "voice_volume": 1.0,
-    "mode": "portrait"
-  }' \
-  --output stitched_video.mp4
+  -d @test_request.json
 ```
 
-### `GET /health`
-
--   **Description:** Health check endpoint
--   **Response:** JSON status message
-
----
-
-## Project Structure
-
-.
-├── main.py # FastAPI application with the /stitch endpoint
-├── video_utils.py # Video handling and stitching utilities
-├── uploads/ # Temporarily stores downloaded and processed videos
-├── stitched/ # Stores final output videos
-├── requirements.txt # List of dependencies
-└── README.md # Project documentation (this file)
-
-## 🧠 How It Works
-
-### 1. 📥 Video Download
-
-Videos are downloaded from the provided URLs and saved to the `uploads/` directory.
-
-### 2. 🔢 Sequence Sorting
-
-Videos are sorted by their sequence number to ensure correct stitching order.
-
-### 3. 🛠️ Video Processing
-
-Each video is processed to match the specifications:
-- **Portrait Mode**: Maintains aspect ratio with padding
-- **Landscape Mode**: Scales to fit target dimensions
-- Frame rate normalization
-- Audio removal (handled separately)
-
-### 4. 🎵 Audio Handling
-
-**Without voice_url:**
-- Preserves original audio from each video segment
-- Stitches videos with their original audio intact
-
-**With voice_url:**
-- Downloads the voice file
-- Removes audio from all videos
-- Loops or trims voice to match total video duration
-- Applies volume adjustment
-- Overlays voice on the final stitched video
-
-### 5. ➕ Concatenation
-
-- Videos are concatenated in sequence order
-- FFmpeg handles seamless merging using the `concat` demuxer
-
-### 6. 🧹 Cleanup
-
-All temporary files are removed after processing:
-- Downloaded videos
-- Processed videos
-- Voice files
-- FFmpeg input lists
+### **Modal Testing**
+```bash
+# Deploy and test
+modal deploy modal_app.py
+curl -X POST "https://your-app.modal.run/stitch" \
+  -H "Content-Type: application/json" \
+  -d @test_request.json
+```
 
 ---
 
-## 🧩 Dependencies
+## 📚 **Dependencies**
 
-These Python libraries are required:
+### **Python Packages**
 ```
 fastapi
 uvicorn
 python-multipart
 ffmpeg-python
 requests
+boto3
+python-dotenv
+firebase-admin
+modal
 ```
 
-Also, ensure that **FFmpeg** is installed on your system.
-
-### ✅ Check if FFmpeg is installed
-
-```bash
-ffmpeg -version
-```
-
-### 💻 Installation Instructions by OS
-
-#### 🖥️ macOS (via Homebrew)
-
-```bash
-brew install ffmpeg
-```
-
-#### 🖥️ Ubuntu / Debian
-
-```bash
-sudo apt update
-sudo apt install ffmpeg
-```
-
-#### 🖥️ Windows
-
-Download FFmpeg from the official site:
-👉 https://ffmpeg.org/download.html
+### **System Requirements**
+- **FFmpeg**: Video processing engine
+- **Python 3.12+**: Runtime environment
+- **8GB RAM**: Recommended for video processing
+- **8 CPU Cores**: Recommended for concurrent processing
 
 ---
 
-## 🚀 Running the API
+## 🎯 **Key Features Summary**
 
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-2. Start the server:
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-3. Access the API:
-- **API Documentation**: http://localhost:8000/docs
-- **Health Check**: http://localhost:8000/health
-- **Stitch Endpoint**: http://localhost:8000/stitch
+✅ **Multi-video stitching** with custom sequence order  
+✅ **Voice overlay** with volume control  
+✅ **Background music** with category selection  
+✅ **Firebase persistence** for session management  
+✅ **Modal deployment** with serverless scaling  
+✅ **S3 integration** for file storage  
+✅ **Concurrent processing** with session isolation  
+✅ **Real-time progress tracking**  
+✅ **Automatic cleanup** and error handling  
+✅ **Multiple video formats** support  
+✅ **Portrait/Landscape** mode support  
 
 ---
 
-## 📝 Usage Examples
+## 🆘 **Support & Troubleshooting**
 
-### Basic Video Stitching
-```json
-{
-  "videos": [
-    {"url": "https://example.com/video1.mp4", "sequence": 1},
-    {"url": "https://example.com/video2.mp4", "sequence": 2}
-  ]
-}
-```
+### **Common Issues**
+1. **FFmpeg not found**: Install FFmpeg on your system
+2. **Firebase connection**: Check service account key and project ID
+3. **S3 upload failed**: Verify AWS credentials and bucket permissions
+4. **Audio mixing errors**: Check audio file formats and durations
 
-### With Voice Overlay
-```json
-{
-  "videos": [
-    {"url": "https://example.com/video1.mp4", "sequence": 1},
-    {"url": "https://example.com/video2.mp4", "sequence": 2}
-  ],
-  "voice_url": "https://example.com/voice.mp3",
-  "voice_volume": 1.0,
-  "mode": "portrait"
-}
-```
+### **Debug Endpoints**
+- `/health` - Basic health check
+- `/stats` - Session statistics
+- `/sessions` - List all sessions
 
-### Custom Sequence Order
-```json
-{
-  "videos": [
-    {"url": "https://example.com/intro.mp4", "sequence": 1},
-    {"url": "https://example.com/ending.mp4", "sequence": 3},
-    {"url": "https://example.com/middle.mp4", "sequence": 2}
-  ],
-  "mode": "landscape"
-}
-```
+### **Logs**
+- **Local**: Check terminal output
+- **Modal**: Check Modal app logs
+- **Firebase**: Check Firestore database
+
+---
+
+**🎬 Your Video Stitcher API is ready for production use! 🚀**

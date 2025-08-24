@@ -3,3 +3,8 @@ uvicorn
 python-multipart
 ffmpeg-python
 requests
+boto3
+python-dotenv
+modal
+firebase-admin
+# Note: shutil, threading, and concurrent.futures are built-in Python modules
