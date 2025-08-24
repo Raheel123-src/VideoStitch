@@ -93,9 +93,11 @@ Stitch multiple videos with optional voice overlay, background music, and custom
 | Category | Description | Files |
 |----------|-------------|-------|
 | `cinematic-happy` | Upbeat cinematic tracks | 5 files |
-| `real-estate` | Professional real estate music | 3 files |
-| `for-video` | General video background music | 4 files |
-| `technical` | Technical/presentation music | 6 files |
+| `real-estate` | Professional real estate music | 1 file |
+| `for-video` | Technical/presentation music | 3 files |
+| `abstract-inspire-corporate` | Corporate inspiration music | 1 file |
+| `airport` | Airport/transportation music | 3 files |
+| `the-background` | General background music | 1 file |
 
 ### **BGM Behavior**
 
